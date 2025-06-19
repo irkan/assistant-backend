@@ -1,0 +1,27 @@
+{
+  "name": "gemini-voice-gateway",
+  "version": "1.0.0",
+  "description": "A WebSocket gateway for real-time, two-way voice conversations with Google's Gemini.",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "ts-node src/server.ts",
+    "build": "tsc",
+    "dev": "nodemon src/server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google/genai": "^1.5.1",
+    "dotenv": "^16.5.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/ws": "^8.5.11",
+    "nodemon": "^3.1.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.3"
+  }
+}
