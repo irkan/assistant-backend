@@ -28,20 +28,20 @@ wss.on('connection', async (ws) => {
       },
       callbacks: {
         onopen: () => {
-          console.log('Gemini session opened');
+          console.log('Gemini session opened: ' + Date.now());
           ws.send(JSON.stringify({ type: 'status', data: 'Gemini session opened' }));
         },
         onmessage: (message) => {
           // Forward message to client
-          console.log('Gemini message:', message);
+          console.log('Gemini message: ' + Date.now());
           ws.send(JSON.stringify({ type: 'gemini', data: message }));
         },
         onerror: (e) => {
-          console.error('Gemini error:', e);
+          console.error('Gemini error:', e.message, Date.now());
           ws.send(JSON.stringify({ type: 'error', data: e.message }));
         },
         onclose: (e) => {
-          console.log('Gemini session closed');
+          console.log('Gemini session closed', e.reason, Date.now());
           ws.send(JSON.stringify({ type: 'status', data: `Gemini session closed: ${e.reason}` }));
         },
       },
@@ -57,7 +57,7 @@ wss.on('connection', async (ws) => {
   ws.on('message', async (message) => {
     // The message from the client is a Buffer of Int16 PCM data.
     // We need to Base64 encode it and send it in the format Gemini expects.
-    console.log('Received message:', message);
+    console.log('Received message from client: ' + Date.now());
     if (session && message instanceof Buffer) {
       const media = {
         data: message.toString('base64'),
@@ -65,12 +65,12 @@ wss.on('connection', async (ws) => {
       };
       session.sendRealtimeInput({ media });
     } else {
-        try {
-            const parsed = JSON.parse(message.toString());
-            // You could handle control messages here, e.g., to start/stop
-        } catch(e) {
-            // Not a JSON message, likely audio
-        }
+      try {
+        const parsed = JSON.parse(message.toString());
+        // You could handle control messages here, e.g., to start/stop
+      } catch (e) {
+        // Not a JSON message, likely audio
+      }
     }
   });
 
