@@ -14,7 +14,9 @@
   "type": "commonjs",
   "dependencies": {
     "@google/genai": "^1.5.1",
+    "@types/wav": "^1.0.4",
     "dotenv": "^16.5.0",
+    "wav": "^1.0.2",
     "ws": "^8.18.2"
   },
   "devDependencies": {
