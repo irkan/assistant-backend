@@ -56,23 +56,43 @@ wss.on('connection', async (ws) => {
           const fileStream = fs.createReadStream(mockAudioPath);
           const reader = new Reader();
 
+          const pcmChunks: Buffer[] = [];
           reader.on('data', (chunk) => {
-            const message = {
-              serverContent: {
-                modelTurn: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: chunk.toString('base64'),
-                        mimeType: 'audio/pcm;rate=16000'
-                      }
-                    }
-                  ]
-                }
-              }
-            };
-            ws.send(JSON.stringify({ type: 'gemini', data: message }));
+            pcmChunks.push(chunk);
           });
+
+          reader.on('end', () => {
+            const pcmData = Buffer.concat(pcmChunks);
+            const chunkSize = 1024; // 32ms of audio at 16kHz 16-bit
+            let offset = 0;
+
+            function sendChunk() {
+              if (offset >= pcmData.length) {
+                return;
+              }
+              const chunk = pcmData.subarray(offset, offset + chunkSize);
+              const message = {
+                serverContent: {
+                  modelTurn: {
+                    parts: [
+                      {
+                        inlineData: {
+                          data: chunk.toString('base64'),
+                          mimeType: 'audio/pcm;rate=16000'
+                        }
+                      }
+                    ]
+                  }
+                }
+              };
+              ws.send(JSON.stringify({ type: 'gemini', data: message }));
+              offset += chunkSize;
+              
+              setTimeout(sendChunk, 32);
+            }
+            sendChunk();
+          });
+
           fileStream.pipe(reader);
 
         } else if (session) {
