@@ -37,12 +37,14 @@ wss.on('connection', async (ws) => {
 
   (async () => {
     try {
-      const speechDetector = await SpeechDetector.create(1536, 0.1);
+      console.log(`Creating speech detector`);
+      const speechDetector = await SpeechDetector.create(undefined, 0.21, 0.1, 1, 1);
       const speechSegments = await speechDetector.process(audioStream);
 
       for await (const segment of speechSegments) {
 
-        console.log(`Received speech segment:`, segment);
+        console.log(`Received speech segment:`, segment.length);
+        ws.send(JSON.stringify({ type: 'gemini', data: { serverContent: { interrupted: true } } }));
         // TODO: Do something with the speech segment, e.g., send to Gemini
         const int16Array = new Int16Array(segment.length);
         for (let i = 0; i < segment.length; i++) {
@@ -151,6 +153,7 @@ wss.on('connection', async (ws) => {
         float32Array[i] = int16Array[i] / 32767.0;
       }
       if (audioStreamController) {
+        console.log(`WEBSOCKET: Received speech:`, float32Array.length);
         audioStreamController.enqueue(float32Array);
       }
 
