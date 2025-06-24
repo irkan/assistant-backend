@@ -16,7 +16,7 @@ const wss = new WebSocketServer({ port: PORT });
 
 console.log(`WebSocket server started on port ${PORT}`);
 
-const recordingsDir = path.join(__dirname, "..", "recordings");
+const recordingsDir = path.join(__dirname, "..", 'recordings');
 if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir);
 }
@@ -56,45 +56,23 @@ wss.on('connection', async (ws) => {
           const fileStream = fs.createReadStream(mockAudioPath);
           const reader = new Reader();
 
-          const pcmChunks: Buffer[] = [];
           reader.on('data', (chunk) => {
-            pcmChunks.push(chunk);
-          });
-
-          reader.on('end', () => {
-            const pcmData = Buffer.concat(pcmChunks);
-            const sampleRate = 16000;
-            const chunkSize = 160; // bytes
-            const chunkDurationMs = 1;
-            let offset = 0;
-
-            function sendChunk() {
-              if (offset >= pcmData.length) {
-                return;
-              }
-              const chunk = pcmData.subarray(offset, offset + chunkSize);
-              const message = {
-                serverContent: {
-                  modelTurn: {
-                    parts: [
-                      {
-                        inlineData: {
-                          data: chunk.toString('base64'),
-                          mimeType: `audio/pcm;rate=${sampleRate}`
-                        }
+            const message = {
+              serverContent: {
+                modelTurn: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: chunk.toString('base64'),
+                        mimeType: 'audio/pcm;rate=24000'
                       }
-                    ]
-                  }
+                    }
+                  ]
                 }
-              };
-              ws.send(JSON.stringify({ type: 'gemini', data: message }));
-              offset += chunkSize;
-              
-              setTimeout(sendChunk, chunkDurationMs);
-            }
-            sendChunk();
+              }
+            };
+            ws.send(JSON.stringify({ type: 'gemini', data: message }));
           });
-
           fileStream.pipe(reader);
 
         } else if (session) {
