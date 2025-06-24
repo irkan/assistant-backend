@@ -88,7 +88,7 @@ wss.on('connection', async (ws) => {
               ws.send(JSON.stringify({ type: 'gemini', data: message }));
               offset += chunkSize;
               
-              setTimeout(sendChunk, 32);
+              setTimeout(sendChunk, 5);
             }
             sendChunk();
           });
