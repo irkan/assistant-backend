@@ -16,7 +16,7 @@ const wss = new WebSocketServer({ port: PORT });
 
 console.log(`WebSocket server started on port ${PORT}`);
 
-const recordingsDir = path.join(__dirname, 'recordings');
+const recordingsDir = path.join(__dirname, "..", "recordings");
 if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir);
 }
