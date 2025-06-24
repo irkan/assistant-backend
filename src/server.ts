@@ -4,7 +4,10 @@ import { GoogleGenAI, Modality, Session } from '@google/genai';
 import { systemInstructionText } from './systemprompt';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Writer } from 'wav';
+import { Writer, Reader } from 'wav';
+import { SpeechDetector } from "speech-detector";
+import { ReadableStream, ReadableStreamDefaultController } from 'stream/web';
+
 
 const PORT = 3001;
 const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -18,62 +21,139 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir);
 }
 
+
 wss.on('connection', async (ws) => {
   console.log('Client connected');
 
-  let session: Session;
+  let session: Session | undefined;
   const audioChunks: Buffer[] = [];
 
-  try {
-    const model = 'gemini-2.5-flash-preview-native-audio-dialog';
-    session = await client.live.connect({
-      model: model,
-      config: {
-        systemInstruction: systemInstructionText,
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } },
-        },
-      },
-      callbacks: {
-        onopen: () => {
-          console.log('Gemini session opened: ' + new Date().toISOString());
-          ws.send(JSON.stringify({ type: 'status', data: 'Gemini session opened' }));
-        },
-        onmessage: (message) => {
-          // Forward message to client
-          console.log('Gemini message: ' + new Date().toISOString());
-          ws.send(JSON.stringify({ type: 'gemini', data: message }));
-        },
-        onerror: (e) => {
-          console.error('Gemini error:', e.message, new Date().toISOString());
-          ws.send(JSON.stringify({ type: 'error', data: e.message }));
-        },
-        onclose: (e) => {
-          console.log('Gemini session closed', e.reason, new Date().toISOString());
-          ws.send(JSON.stringify({ type: 'status', data: `Gemini session closed: ${e.reason}` }));
-        },
-      },
-    });
+  let audioStreamController: ReadableStreamDefaultController<Float32Array>;
+  const audioStream = new ReadableStream<Float32Array>({
+    start(controller) {
+      audioStreamController = controller;
+    }
+  });
 
-  } catch (e) {
-    console.error('Failed to connect to Gemini:', e);
-    ws.close(1011, 'Failed to establish Gemini session.');
-    return;
+  (async () => {
+    try {
+      const speechDetector = await SpeechDetector.create(1536, 0.1);
+      const speechSegments = await speechDetector.process(audioStream);
+
+      for await (const segment of speechSegments) {
+
+        console.log(`Received speech segment:`, segment);
+        // TODO: Do something with the speech segment, e.g., send to Gemini
+        const int16Array = new Int16Array(segment.length);
+        for (let i = 0; i < segment.length; i++) {
+          const s = Math.max(-1, Math.min(1, segment[i]));
+          int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        const pcmData = Buffer.from(int16Array.buffer);
+
+        if (process.env.MOCK_GEMINI === 'true') {
+          const mockAudioPath = path.join(__dirname, '..', 'mock_recording', 'mock_playback.wav');
+          const fileStream = fs.createReadStream(mockAudioPath);
+          const reader = new Reader();
+
+          reader.on('data', (chunk) => {
+            const message = {
+              serverContent: {
+                modelTurn: {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: chunk.toString('base64'),
+                        mimeType: 'audio/pcm;rate=16000'
+                      }
+                    }
+                  ]
+                }
+              }
+            };
+            ws.send(JSON.stringify({ type: 'gemini', data: message }));
+          });
+          fileStream.pipe(reader);
+
+        } else if (session) {
+          const media = {
+            data: pcmData.toString('base64'),
+            mimeType: 'audio/pcm;rate=16000',
+          };
+          session.sendRealtimeInput({ media });
+        }
+      }
+    } catch (e) {
+      console.error('Error in speech detection processing:', e);
+    }
+  })();
+
+  if (process.env.MOCK_GEMINI === 'true') {
+    console.log('Using mocked Gemini response.');
+    ws.send(JSON.stringify({ type: 'status', data: 'Gemini session opened (mocked)' }));
+  } else {
+    try {
+      const model = 'gemini-2.5-flash-preview-native-audio-dialog';
+      session = await client.live.connect({
+        model: model,
+        config: {
+          systemInstruction: systemInstructionText,
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } },
+          },
+        },
+        callbacks: {
+          onopen: () => {
+            console.log('Gemini session opened: ' + new Date().toISOString());
+            ws.send(JSON.stringify({ type: 'status', data: 'Gemini session opened' }));
+          },
+          onmessage: (message) => {
+            // Forward message to client
+            console.log('Gemini message: ' + new Date().toISOString());
+            try {
+              const json = JSON.stringify(message);
+              console.log(json);
+            } catch (e) {
+              console.error('Error parsing Gemini message:', e);
+            }
+            ws.send(JSON.stringify({ type: 'gemini', data: message }));
+          },
+          onerror: (e) => {
+            console.error('Gemini error:', e.message, new Date().toISOString());
+            ws.send(JSON.stringify({ type: 'error', data: e.message }));
+          },
+          onclose: (e) => {
+            console.log('Gemini session closed', e.reason, new Date().toISOString());
+            ws.send(JSON.stringify({ type: 'status', data: `Gemini session closed: ${e.reason}` }));
+          },
+        },
+      });
+
+    } catch (e) {
+      console.error('Failed to connect to Gemini:', e);
+      ws.close(1011, 'Failed to establish Gemini session.');
+      return;
+    }
   }
 
 
   ws.on('message', async (message) => {
     // The message from the client is a Buffer of Int16 PCM data.
     // We need to Base64 encode it and send it in the format Gemini expects.
-    console.log(`Received message from client: ${new Date().toISOString()}`);
-    if (session && message instanceof Buffer) {
+    // console.log(`Received message from client: ${new Date().toISOString()}`);
+    if (message instanceof Buffer) {
       audioChunks.push(message);
-      const media = {
-        data: message.toString('base64'),
-        mimeType: 'audio/pcm;rate=16000',
-      };
-      session.sendRealtimeInput({ media });
+
+      const int16Array = new Int16Array(message.buffer, message.byteOffset, message.byteLength / 2);
+      const float32Array = new Float32Array(int16Array.length);
+      for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32767.0;
+      }
+      if (audioStreamController) {
+        audioStreamController.enqueue(float32Array);
+      }
+
     } else {
       try {
         const parsed = JSON.parse(message.toString());
@@ -87,6 +167,9 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected');
+    if (audioStreamController) {
+      audioStreamController.close();
+    }
     if (session) {
       session.close();
     }
