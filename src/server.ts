@@ -63,7 +63,9 @@ wss.on('connection', async (ws) => {
 
           reader.on('end', () => {
             const pcmData = Buffer.concat(pcmChunks);
-            const chunkSize = 1024; // 32ms of audio at 16kHz 16-bit
+            const sampleRate = 16000;
+            const chunkSize = 160; // bytes
+            const chunkDurationMs = 1;
             let offset = 0;
 
             function sendChunk() {
@@ -78,7 +80,7 @@ wss.on('connection', async (ws) => {
                       {
                         inlineData: {
                           data: chunk.toString('base64'),
-                          mimeType: 'audio/pcm;rate=16000'
+                          mimeType: `audio/pcm;rate=${sampleRate}`
                         }
                       }
                     ]
@@ -88,7 +90,7 @@ wss.on('connection', async (ws) => {
               ws.send(JSON.stringify({ type: 'gemini', data: message }));
               offset += chunkSize;
               
-              setTimeout(sendChunk, 5);
+              setTimeout(sendChunk, chunkDurationMs);
             }
             sendChunk();
           });
