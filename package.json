@@ -6,7 +6,8 @@
   "scripts": {
     "start": "ts-node src/server.ts",
     "build": "tsc",
-    "dev": "nodemon src/server.ts"
+    "dev": "nodemon src/server.ts",
+    "dev:mock": "nodemon src/mockserver.ts"
   },
   "keywords": [],
   "author": "",
