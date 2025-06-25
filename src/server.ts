@@ -38,7 +38,7 @@ wss.on('connection', async (ws) => {
   (async () => {
     try {
       console.log(`Creating speech detector`);
-      const speechDetector = await SpeechDetector.create(undefined, 0.21, 0.1, 1, 1);
+      const speechDetector = await SpeechDetector.create(undefined, 0.31, 0.1, 1, 1);
       const speechSegments = await speechDetector.process(audioStream);
 
       for await (const segment of speechSegments) {
