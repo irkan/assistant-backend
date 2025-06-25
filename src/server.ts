@@ -158,10 +158,9 @@ wss.on('connection', async (ws) => {
           },
           onmessage: (message) => {
             // Forward message to client
-            console.log('Gemini message: ' + new Date().toISOString());
             try {
               if (message.serverContent?.interrupted) {
-                console.log('Gemini interrupted: ' + new Date().toISOString());;
+                console.log('[INTERRUPTED]Gemini interrupted: ' + new Date().toISOString());;
               }
               if (message.serverContent?.modelTurn?.parts?.length) {
                 console.log('Gemini message chunk received: ' + message.serverContent?.modelTurn?.parts?.length);;
