@@ -165,15 +165,13 @@ wss.on('connection', async (ws) => {
               if (message.serverContent?.modelTurn?.parts?.length) {
                 console.log('Gemini message chunk received: ' + message.serverContent?.modelTurn?.parts?.length);;
               }
+              if (!message.serverContent?.modelTurn?.parts?.[0]?.inlineData) {
+                console.log('Gemini message: ' + JSON.stringify(message));;
+              }
             } catch (e) {
               console.error('Error parsing Gemini message:', e);
             }
-            try {
-              const json = JSON.stringify(message);
-              // console.log(json);
-            } catch (e) {
-              console.error('Error parsing Gemini message:', e);
-            }
+
             ws.send(JSON.stringify({ type: 'gemini', data: message }));
           },
           onerror: (e) => {
