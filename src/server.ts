@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
-import { GoogleGenAI, Modality, Session } from '@google/genai';
+import { GoogleGenAI, MediaResolution, Modality, Session } from '@google/genai';
 import { systemInstructionText } from './systemprompt';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,7 +25,6 @@ if (!fs.existsSync(recordingsDir)) {
 wss.on('connection', async (ws) => {
   console.log('Client connected');
 
-  let session: Session | undefined;
   const audioChunks: Buffer[] = [];
 
   let audioStreamController: ReadableStreamDefaultController<Float32Array>;
@@ -96,7 +95,7 @@ wss.on('connection', async (ws) => {
               };
               ws.send(JSON.stringify({ type: 'gemini', data: message }));
               offset += chunkSize;
-              
+
               setTimeout(sendChunk, chunkDurationMs);
             }
             sendChunk();
@@ -120,19 +119,13 @@ wss.on('connection', async (ws) => {
           // });
           fileStream.pipe(reader);
 
-        } else if (session) {
-          const media = {
-            data: pcmData.toString('base64'),
-            mimeType: 'audio/pcm;rate=16000',
-          };
-          session.sendRealtimeInput({ media });
         }
       }
     } catch (e) {
       console.error('Error in speech detection processing:', e);
     }
   })();
-
+  let session: Session | undefined;
   if (process.env.MOCK_GEMINI === 'true') {
     console.log('Using mocked Gemini response.');
     ws.send(JSON.stringify({ type: 'status', data: 'Gemini session opened (mocked)' }));
@@ -142,10 +135,20 @@ wss.on('connection', async (ws) => {
       session = await client.live.connect({
         model: model,
         config: {
+          generationConfig: {
+            mediaResolution: MediaResolution.MEDIA_RESOLUTION_MEDIUM,
+            temperature: 1,
+          },
+          contextWindowCompression: {
+            triggerTokens: '25600',
+            slidingWindow: {
+              targetTokens: '12800'
+            }
+          },
           systemInstruction: systemInstructionText,
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Orus' } }
           },
         },
         callbacks: {
@@ -157,8 +160,18 @@ wss.on('connection', async (ws) => {
             // Forward message to client
             console.log('Gemini message: ' + new Date().toISOString());
             try {
+              if (message.serverContent?.interrupted) {
+                console.log('Gemini interrupted: ' + new Date().toISOString());;
+              }
+              if (message.serverContent?.modelTurn?.parts?.length) {
+                console.log('Gemini message chunk received: ' + message.serverContent?.modelTurn?.parts?.length);;
+              }
+            } catch (e) {
+              console.error('Error parsing Gemini message:', e);
+            }
+            try {
               const json = JSON.stringify(message);
-              console.log(json);
+              // console.log(json);
             } catch (e) {
               console.error('Error parsing Gemini message:', e);
             }
@@ -187,26 +200,36 @@ wss.on('connection', async (ws) => {
     // The message from the client is a Buffer of Int16 PCM data.
     // We need to Base64 encode it and send it in the format Gemini expects.
     // console.log(`Received message from client: ${new Date().toISOString()}`);
-    if (message instanceof Buffer) {
-      audioChunks.push(message);
+    if (process.env.MOCK_GEMINI === 'true') {
+      if (message instanceof Buffer) {
+        audioChunks.push(message);
 
-      const int16Array = new Int16Array(message.buffer, message.byteOffset, message.byteLength / 2);
-      const float32Array = new Float32Array(int16Array.length);
-      for (let i = 0; i < int16Array.length; i++) {
-        float32Array[i] = int16Array[i] / 32767.0;
-      }
-      if (audioStreamController) {
-        console.log(`WEBSOCKET: Received speech:`, float32Array.length);
-        audioStreamController.enqueue(float32Array);
-      }
+        const int16Array = new Int16Array(message.buffer, message.byteOffset, message.byteLength / 2);
+        const float32Array = new Float32Array(int16Array.length);
+        for (let i = 0; i < int16Array.length; i++) {
+          float32Array[i] = int16Array[i] / 32767.0;
+        }
+        if (audioStreamController) {
+          console.log(`WEBSOCKET: Received speech:`, float32Array.length);
+          audioStreamController.enqueue(float32Array);
+        }
 
+      } else {
+        try {
+          const parsed = JSON.parse(message.toString());
+          console.log('Received control message from client: ' + new Date().toISOString());
+          // You could handle control messages here, e.g., to start/stop
+        } catch (e) {
+          // Not a JSON message, likely audio
+        }
+      }
     } else {
-      try {
-        const parsed = JSON.parse(message.toString());
-        console.log('Received control message from client: ' + new Date().toISOString());
-        // You could handle control messages here, e.g., to start/stop
-      } catch (e) {
-        // Not a JSON message, likely audio
+      if (session) {
+        const media = {
+          data: message.toString('base64'),
+          mimeType: 'audio/pcm;rate=16000',
+        };
+        session.sendRealtimeInput({ media });
       }
     }
   });
