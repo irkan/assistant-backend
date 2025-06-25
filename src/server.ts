@@ -57,24 +57,67 @@ wss.on('connection', async (ws) => {
           const mockAudioPath = path.join(__dirname, '..', 'mock_recording', 'mock_playback.wav');
           const fileStream = fs.createReadStream(mockAudioPath);
           const reader = new Reader();
-
+          const pcmChunks: Buffer[] = [];
+          // Add 20ms of silence at the beginning
+          const silenceDuration = 0.02; // 20ms
+          const sampleRate = 16000;
+          const silenceSamples = Math.floor(silenceDuration * sampleRate);
+          const silenceBuffer = Buffer.alloc(silenceSamples * 2); // 2 bytes per sample for 16-bit PCM
+          pcmChunks.push(silenceBuffer);
           reader.on('data', (chunk) => {
-            const message = {
-              serverContent: {
-                modelTurn: {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: chunk.toString('base64'),
-                        mimeType: 'audio/pcm;rate=24000'
-                      }
-                    }
-                  ]
-                }
-              }
-            };
-            ws.send(JSON.stringify({ type: 'gemini', data: message }));
+            pcmChunks.push(chunk);
           });
+
+          reader.on('end', () => {
+            const pcmData = Buffer.concat(pcmChunks);
+            const sampleRate = 16000;
+            const chunkSize = 160; // bytes
+            const chunkDurationMs = 2;
+            let offset = 0;
+
+            function sendChunk() {
+              if (offset >= pcmData.length) {
+                return;
+              }
+              const chunk = pcmData.subarray(offset, offset + chunkSize);
+              const message = {
+                serverContent: {
+                  modelTurn: {
+                    parts: [
+                      {
+                        inlineData: {
+                          data: chunk.toString('base64'),
+                          mimeType: `audio/pcm;rate=${sampleRate}`
+                        }
+                      }
+                    ]
+                  }
+                }
+              };
+              ws.send(JSON.stringify({ type: 'gemini', data: message }));
+              offset += chunkSize;
+              
+              setTimeout(sendChunk, chunkDurationMs);
+            }
+            sendChunk();
+          });
+          // reader.on('data', (chunk) => {
+          //   const message = {
+          //     serverContent: {
+          //       modelTurn: {
+          //         parts: [
+          //           {
+          //             inlineData: {
+          //               data: chunk.toString('base64'),
+          //               mimeType: 'audio/pcm;rate=24000'
+          //             }
+          //           }
+          //         ]
+          //       }
+          //     }
+          //   };
+          //   ws.send(JSON.stringify({ type: 'gemini', data: message }));
+          // });
           fileStream.pipe(reader);
 
         } else if (session) {
