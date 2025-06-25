@@ -38,7 +38,7 @@ wss.on('connection', async (ws) => {
   (async () => {
     try {
       console.log(`Creating speech detector`);
-      const speechDetector = await SpeechDetector.create(undefined, 0.5, 0.1, 1, 1);
+      const speechDetector = await SpeechDetector.create(undefined, 0.5, 0.1, 5, 2);
       const speechSegments = await speechDetector.process(audioStream);
 
       for await (const segment of speechSegments) {
@@ -59,8 +59,8 @@ wss.on('connection', async (ws) => {
           const reader = new Reader();
           const pcmChunks: Buffer[] = [];
           // Add 20ms of silence at the beginning
-          const silenceDuration = 0.02; // 20ms
-          const sampleRate = 16000;
+          const silenceDuration = 0.1; // 20ms
+          const sampleRate = 24000;
           const silenceSamples = Math.floor(silenceDuration * sampleRate);
           const silenceBuffer = Buffer.alloc(silenceSamples * 2); // 2 bytes per sample for 16-bit PCM
           pcmChunks.push(silenceBuffer);
@@ -70,9 +70,9 @@ wss.on('connection', async (ws) => {
 
           reader.on('end', () => {
             const pcmData = Buffer.concat(pcmChunks);
-            const sampleRate = 16000;
-            const chunkSize = 160; // bytes
-            const chunkDurationMs = 2;
+            const sampleRate = 24000;
+            const chunkSize = 512; // bytes
+            const chunkDurationMs = 0;
             let offset = 0;
 
             function sendChunk() {
