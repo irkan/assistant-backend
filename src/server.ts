@@ -54,7 +54,7 @@ wss.on('connection', async (ws) => {
         const pcmData = Buffer.from(int16Array.buffer);
 
         if (process.env.MOCK_GEMINI === 'true') {
-          const mockAudioPath = path.join(__dirname, '..', 'mock_recording', 'mock_playback.wav');
+          const mockAudioPath = path.join(__dirname, '..', 'mock_recording', 'download.wav');
           const fileStream = fs.createReadStream(mockAudioPath);
           const reader = new Reader();
           const pcmChunks: Buffer[] = [];
