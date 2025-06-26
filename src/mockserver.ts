@@ -35,8 +35,9 @@ wss.on('connection', async (ws) => {
   });
 
   let playbackInterval: NodeJS.Timeout | null = null;
-  
+
   const stopPlayback = () => {
+    ws.send(JSON.stringify({ type: 'gemini', data: { serverContent: { interrupted: true } } }));
     if (playbackInterval) {
       clearInterval(playbackInterval);
       playbackInterval = null;
@@ -46,7 +47,7 @@ wss.on('connection', async (ws) => {
 
   const startPlayback = () => {
     stopPlayback(); // Ensure any previous playback is stopped
-    
+
     if (commonVoiceFiles.length === 0) {
       console.error("Cannot start playback: No common_voice_az_*.wav files found.");
       return;
@@ -63,7 +64,7 @@ wss.on('connection', async (ws) => {
       console.log('Playback audio format from file:', format);
       const { sampleRate, bitDepth } = format;
       const bytesPerSample = bitDepth / 8;
-      
+
       const chunkSize = Math.floor(sampleRate * bytesPerSample * 0.04); // 40ms chunks
       let offset = 44; // Start after WAV header
 
@@ -72,7 +73,7 @@ wss.on('connection', async (ws) => {
           stopPlayback();
           return;
         }
-        
+
         const chunkEnd = Math.min(offset + chunkSize, fileBuffer.length);
         const chunk = fileBuffer.subarray(offset, chunkEnd);
         offset = chunkEnd;
@@ -87,10 +88,10 @@ wss.on('connection', async (ws) => {
         ws.send(JSON.stringify({ type: 'gemini', data: message }));
       }, 10);
     });
-    
+
     reader.write(fileBuffer);
   };
-  
+
   (async () => {
     try {
       const speechDetector = await SpeechDetector.create(undefined, 0.3, 0.1, 5, 2);
@@ -111,14 +112,14 @@ wss.on('connection', async (ws) => {
     if (message instanceof Buffer) {
       const int16Array = new Int16Array(message.buffer, message.byteOffset, message.byteLength / 2);
       const float32Array = new Float32Array(int16Array.length);
-      
+
       let sumOfSquares = 0.0;
       for (let i = 0; i < int16Array.length; i++) {
         const sample = int16Array[i] / 32768.0;
         float32Array[i] = sample;
         sumOfSquares += sample * sample;
       }
-      
+
       const rms = Math.sqrt(sumOfSquares / int16Array.length);
       if (rms > VAD_THRESHOLD && playbackInterval) {
         console.log(`Interruption detected! RMS: ${rms.toFixed(2)}`);
