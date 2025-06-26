@@ -85,7 +85,7 @@ wss.on('connection', async (ws) => {
           }
         };
         ws.send(JSON.stringify({ type: 'gemini', data: message }));
-      }, 40);
+      }, 10);
     });
     
     reader.write(fileBuffer);
