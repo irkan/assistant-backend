@@ -2,18 +2,27 @@ import 'dotenv/config';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Writer, Reader } from 'wav';
+import { Reader } from 'wav';
 import { SpeechDetector } from "speech-detector";
 import { ReadableStream, ReadableStreamDefaultController } from 'stream/web';
 
 const PORT = 3001;
+
+const mockRecordingsDir = path.join(__dirname, '..', 'mock_recording');
+const commonVoiceFiles = fs.readdirSync(mockRecordingsDir)
+  .filter(file => file.startsWith('common_voice_az_') && file.endsWith('.wav'))
+  .map(file => path.join(mockRecordingsDir, file));
+
+if (commonVoiceFiles.length === 0) {
+  console.warn('Warning: No common_voice_az_*.wav files found in mock_recording directory. Random playback will not work.');
+}
 
 const wss = new WebSocketServer({ port: PORT });
 
 console.log(`Mock WebSocket server started on port ${PORT}`);
 
 // Threshold for detecting user speech for interruption. This may need tuning.
-const VAD_THRESHOLD = 0.2;
+const VAD_THRESHOLD = 0.2; // Lowered from 0.2 for more sensitivity
 
 wss.on('connection', async (ws) => {
   console.log('Client connected to mock server');
@@ -25,73 +34,63 @@ wss.on('connection', async (ws) => {
     }
   });
 
-  let isPlaying = false;
-  let interrupted = false;
+  let playbackInterval: NodeJS.Timeout | null = null;
+  
+  const stopPlayback = () => {
+    if (playbackInterval) {
+      clearInterval(playbackInterval);
+      playbackInterval = null;
+      console.log('Playback stopped.');
+    }
+  };
 
   const startPlayback = () => {
-    if (isPlaying) return;
+    stopPlayback(); // Ensure any previous playback is stopped
+    
+    if (commonVoiceFiles.length === 0) {
+      console.error("Cannot start playback: No common_voice_az_*.wav files found.");
+      return;
+    }
+
     console.log('Starting playback...');
-    isPlaying = true;
-    interrupted = false;
 
-    const mockAudioPath = path.join(__dirname, '..', 'mock_recording', 'mock_playback_24kHz.wav');
-    const fileStream = fs.createReadStream(mockAudioPath);
+    const mockAudioPath = commonVoiceFiles[Math.floor(Math.random() * commonVoiceFiles.length)];
+    console.log(`Playing random file: ${path.basename(mockAudioPath)}`);
+    const fileBuffer = fs.readFileSync(mockAudioPath);
     const reader = new Reader();
-
-    let sampleRate = 24000; // Default sample rate, will be updated by 'format' event
-    let intervalId: NodeJS.Timeout | null = null;
 
     reader.on('format', (format) => {
       console.log('Playback audio format from file:', format);
-      sampleRate = format.sampleRate;
+      const { sampleRate, bitDepth } = format;
+      const bytesPerSample = bitDepth / 8;
       
-      const chunkSize = Math.floor(sampleRate * 2 * 0.04); // 40ms chunks for 16-bit mono audio
+      const chunkSize = Math.floor(sampleRate * bytesPerSample * 0.04); // 40ms chunks
+      let offset = 44; // Start after WAV header
 
-      intervalId = setInterval(() => {
-        if (interrupted) {
-          if (intervalId) clearInterval(intervalId);
-          fileStream.destroy();
-          console.log('Playback interrupted.');
+      playbackInterval = setInterval(() => {
+        if (offset >= fileBuffer.length) {
+          stopPlayback();
           return;
         }
+        
+        const chunkEnd = Math.min(offset + chunkSize, fileBuffer.length);
+        const chunk = fileBuffer.subarray(offset, chunkEnd);
+        offset = chunkEnd;
 
-        const chunk = reader.read(chunkSize);
-        if (chunk) {
-          const message = {
-            serverContent: {
-              modelTurn: {
-                parts: [
-                  {
-                    inlineData: {
-                      data: chunk.toString('base64'),
-                      mimeType: `audio/pcm;rate=${sampleRate}`
-                    }
-                  }
-                ]
-              }
+        const message = {
+          serverContent: {
+            modelTurn: {
+              parts: [{ inlineData: { data: chunk.toString('base64'), mimeType: `audio/pcm;rate=${sampleRate}` } }]
             }
-          };
-          ws.send(JSON.stringify({ type: 'gemini', data: message }));
-        }
+          }
+        };
+        ws.send(JSON.stringify({ type: 'gemini', data: message }));
       }, 40);
     });
-
-    reader.on('end', () => {
-      console.log('Playback finished.');
-      if (intervalId) clearInterval(intervalId);
-      isPlaying = false;
-    });
-
-    fileStream.on('close', () => {
-      console.log('Playback file stream closed.');
-      if (intervalId) clearInterval(intervalId);
-      isPlaying = false;
-    });
-
-    fileStream.pipe(reader);
+    
+    reader.write(fileBuffer);
   };
-
-  // This loop detects when the user has finished speaking an utterance.
+  
   (async () => {
     try {
       const speechDetector = await SpeechDetector.create(undefined, 0.3, 0.1, 5, 2);
@@ -99,18 +98,10 @@ wss.on('connection', async (ws) => {
 
       for await (const segment of speechSegments) {
         console.log(`User speech segment detected, length: ${segment.length}. Starting mock response.`);
-        if (isPlaying) {
-            interrupted = true;
-        }
-        // Wait for any ongoing (but now interrupted) playback to stop
-        setTimeout(() => {
-            startPlayback();
-        }, 100); // Small delay to ensure client processes interruption
+        setTimeout(startPlayback, 100);
       }
     } catch (e: any) {
-      if (e.message.includes('closed')) {
-        console.log('Audio stream closed for speech detection.');
-      } else {
+      if (!e.message.includes('closed')) {
         console.error('Error in speech segment processing:', e);
       }
     }
@@ -128,15 +119,14 @@ wss.on('connection', async (ws) => {
         sumOfSquares += sample * sample;
       }
       
-      // Simple VAD for interruption
       const rms = Math.sqrt(sumOfSquares / int16Array.length);
-      if (rms > VAD_THRESHOLD && isPlaying && !interrupted) {
+      if (rms > VAD_THRESHOLD && playbackInterval) {
         console.log(`Interruption detected! RMS: ${rms.toFixed(2)}`);
-        interrupted = true;
+        stopPlayback();
         ws.send(JSON.stringify({ type: 'gemini', data: { serverContent: { interrupted: true } } }));
       }
 
-      if (audioStreamController) {
+      if (audioStreamController && audioStreamController.desiredSize != null && audioStreamController.desiredSize > 0) {
         audioStreamController.enqueue(float32Array);
       }
     }
@@ -144,17 +134,13 @@ wss.on('connection', async (ws) => {
 
   ws.on('close', () => {
     console.log('Client disconnected');
-    if (audioStreamController) {
-      audioStreamController.close();
-    }
-    interrupted = true;
+    stopPlayback();
+    if (audioStreamController) audioStreamController.close();
   });
 
   ws.on('error', (error) => {
     console.error('WebSocket error:', error);
-    interrupted = true;
-    if (audioStreamController) {
-        audioStreamController.close();
-      }
+    stopPlayback();
+    if (audioStreamController) audioStreamController.close();
   });
 }); 
