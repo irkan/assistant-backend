@@ -1,3 +1,5 @@
 websockets
-webrtcvad-wheels
-pydub 
+pydub
+silero-vad
+torch
+numpy 

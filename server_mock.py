@@ -5,7 +5,8 @@ import os
 import random
 import time
 
-import webrtcvad
+import numpy as np
+import torch
 import websockets
 from pydub import AudioSegment
 
@@ -13,22 +14,41 @@ from pydub import AudioSegment
 PORT = 3001
 INPUT_RATE = 16000
 OUTPUT_RATE = 24000
-VAD_AGGRESSIVENESS = 3  # 0 to 3. 3 is most aggressive.
+VAD_AGGRESSIVENESS = 3  # Kept for reference, but Silero has its own tuning.
 MOCK_AUDIO_DIR = 'mock_recording/'
-# VAD requires specific frame lengths: 10, 20, or 30 ms.
-# At 16kHz, 16-bit audio, 30ms is 16000 * 0.030 * 2 bytes = 960 bytes.
-VAD_FRAME_MS = 30
-VAD_FRAME_BYTES = int(INPUT_RATE * (VAD_FRAME_MS / 1000.0) * 2)
 
-# --- Helper Functions ---
+# Silero VAD works with chunk sizes of 512, 1024, or 1536 samples for 16kHz audio.
+# The ONNX model specifically requires 512 samples for 16kHz.
+VAD_CHUNK_SAMPLES = 512
+VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2  # 16-bit audio = 2 bytes per sample
+# Probability threshold for considering a chunk as speech.
+VAD_SPEECH_THRESHOLD = 0.5
+
+# --- Silero VAD Model Loading ---
+print("Loading Silero VAD model...")
+# Using `torch.hub.load` to get the Silero VAD model.
+# The model is downloaded automatically on the first run.
+# Using onnx=True for better performance, as recommended by Silero.
+model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+                          model='silero_vad',
+                          force_reload=False,
+                          onnx=True)
+print("Silero VAD model loaded.")
 
 
-def get_random_audio_filepath():
-    """Selects a random .wav file from the mock audio directory."""
-    wav_files = [f for f in os.listdir(MOCK_AUDIO_DIR) if f.endswith('.wav')]
-    if not wav_files:
-        raise FileNotFoundError(f"No .wav files found in {MOCK_AUDIO_DIR}")
-    return os.path.join(MOCK_AUDIO_DIR, random.choice(wav_files))
+def is_speech(chunk: bytes, vad_model) -> bool:
+    """
+    Checks if a raw audio byte chunk contains speech using the Silero VAD model.
+    """
+    if len(chunk) != VAD_CHUNK_BYTES:
+        return False
+    # Convert the 16-bit PCM bytes to a float32 tensor, as required by the model.
+    audio_int16 = np.frombuffer(chunk, np.int16)
+    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+    tensor = torch.from_numpy(audio_float32)
+    # Get the speech probability from the model.
+    speech_prob = vad_model(tensor, INPUT_RATE).item()
+    return speech_prob > VAD_SPEECH_THRESHOLD
 
 
 async def send_mock_audio(websocket):
@@ -82,11 +102,11 @@ async def send_mock_audio(websocket):
                 break
 
             chunks_sent += 1
-            
+
             # Self-correcting sleep to maintain a steady rhythm
             next_send_time = start_time + chunks_sent * chunk_duration_sec
             sleep_for = next_send_time - time.monotonic()
-            
+
             if sleep_for > 0:
                 await asyncio.sleep(sleep_for)
 
@@ -98,16 +118,12 @@ async def send_mock_audio(websocket):
         print(f"Error in send_mock_audio: {e}")
 
 
-# --- WebSocket Handler ---
-
-
 async def handler(websocket):
     """
     Handles incoming WebSocket connections, performs VAD, and triggers response.
     Waits for the user to be silent before responding.
     """
     print(f"Client connected from {websocket.remote_address}")
-    vad = webrtcvad.Vad(VAD_AGGRESSIVENESS)
     audio_buffer = bytearray()
     playback_task = None
 
@@ -115,14 +131,15 @@ async def handler(websocket):
     last_speech_time = 0
     SILENCE_THRESHOLD_S = 0.5  # 500ms
 
+    vad_model = model  # Use the globally loaded model
+
     try:
         while True:
             # State 1: WAITING_FOR_SILENCE check
-            # This is the primary check to see if we should start talking.
             if state == "WAITING_FOR_SILENCE" and time.monotonic() - last_speech_time > SILENCE_THRESHOLD_S:
                 print("End of speech detected, starting response.")
                 state = "RESPONDING"
-                audio_buffer.clear()  # Clear buffer of any trailing silence
+                audio_buffer.clear()
                 playback_task = asyncio.create_task(send_mock_audio(websocket))
 
             # State 2: Check if server has finished RESPONDING
@@ -137,18 +154,15 @@ async def handler(websocket):
                 if isinstance(message, bytes):
                     audio_buffer.extend(message)
             except asyncio.TimeoutError:
-                # No audio received, just loop again to check state.
                 continue
 
             # Process any audio data we have in the buffer
-            while len(audio_buffer) >= VAD_FRAME_BYTES:
-                frame = audio_buffer[:VAD_FRAME_BYTES]
-                del audio_buffer[:VAD_FRAME_BYTES]
+            while len(audio_buffer) >= VAD_CHUNK_BYTES:
+                frame = audio_buffer[:VAD_CHUNK_BYTES]
+                del audio_buffer[:VAD_CHUNK_BYTES]
 
                 try:
-                    is_speech = vad.is_speech(frame, INPUT_RATE)
-                    if not is_speech:
-                        # Not speech, so we can ignore this frame and continue.
+                    if not is_speech(frame, vad_model):
                         continue
 
                     # --- If we get here, it means we detected speech ---
@@ -156,18 +170,18 @@ async def handler(websocket):
 
                     # If server is speaking, new speech should interrupt it.
                     if state == "RESPONDING" and playback_task and not playback_task.done():
-                        print("Interrupting current playback.")
+                        print("Interrupting current playback due to sustained user speech.")
                         playback_task.cancel()
                         try:
                             await playback_task
                         except asyncio.CancelledError:
-                            pass  # Expected cancellation
-                        state = "LISTENING" # Go back to listening before we re-trigger
+                            pass
+                        state = "WAITING_FOR_SILENCE"
 
                     # This is the start of a new utterance from the user.
                     if state == "LISTENING":
                         state = "WAITING_FOR_SILENCE"
-                        print("Voice detected. Sending interrupt, waiting for end of speech.")
+                        print("Sustained voice detected. Sending interrupt, waiting for end of speech.")
                         interrupt_message = {
                             "type": "gemini",
                             "data": {"serverContent": {"interrupted": True}}
@@ -187,7 +201,15 @@ async def handler(websocket):
             playback_task.cancel()
         print(f"Client {websocket.remote_address} disconnected.")
 
+
 # --- Main Server ---
+
+def get_random_audio_filepath():
+    """Selects a random .wav file from the mock audio directory."""
+    wav_files = [f for f in os.listdir(MOCK_AUDIO_DIR) if f.endswith('.wav')]
+    if not wav_files:
+        raise FileNotFoundError(f"No .wav files found in {MOCK_AUDIO_DIR}")
+    return os.path.join(MOCK_AUDIO_DIR, random.choice(wav_files))
 
 
 async def main():
