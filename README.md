@@ -33,13 +33,43 @@ This server acts as a backend that connects to the Google GenAI service, managin
 
 1.  Create a `.env` file in the root of the project:
     ```bash
-    touch .env
+    cp env.example .env
     ```
 
-2.  Add your Google Gemini API key to the `.env` file:
+2.  Configure the environment variables in your `.env` file:
+
+    ```bash
+    # Server Configuration
+    SERVER_PORT=3001
+
+    # API Configuration
+    ADMINPANEL_BACKEND_BASE_URL=http://localhost:3000
+
+    # Gemini AI Configuration
+    GEMINI_API_KEY=your_gemini_api_key_here
+    GEMINI_MODEL=gemini-2.5-flash-preview-native-audio-dialog
+    GEMINI_TEMPERATURE=1
+    GEMINI_TRIGGER_TOKENS=25600
+    GEMINI_TARGET_TOKENS=12800
+    GEMINI_VOICE_NAME=Orus
+
+    # Recordings Configuration
+    RECORDINGS_DIRECTORY=recordings
     ```
-    GEMINI_API_KEY=your_api_key_here
-    ```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SERVER_PORT` | WebSocket server port | `3001` |
+| `ADMINPANEL_BACKEND_BASE_URL` | Base URL for agent API | `http://localhost:3000` |
+| `GEMINI_API_KEY` | Your Gemini API key | Required |
+| `GEMINI_MODEL` | Gemini model to use | `gemini-2.5-flash-preview-native-audio-dialog` |
+| `GEMINI_TEMPERATURE` | AI temperature setting | `1` |
+| `GEMINI_TRIGGER_TOKENS` | Context window trigger tokens | `25600` |
+| `GEMINI_TARGET_TOKENS` | Context window target tokens | `12800` |
+| `GEMINI_VOICE_NAME` | Voice name for speech | `Orus` |
+| `RECORDINGS_DIRECTORY` | Directory for audio recordings | `recordings` |
 
 ## Usage
 
